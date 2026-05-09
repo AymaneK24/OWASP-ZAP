@@ -24,10 +24,10 @@ terraform.tfstate.lock.info
 # Security/auth files
 bearer-auth.js
 automation.yaml
-automation-template.yaml
+
 
 # Report files (generated)
-zap-report.html
+
 zap-report.json
 zap-scan.sh
 

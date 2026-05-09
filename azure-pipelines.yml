@@ -1,0 +1,168 @@
+# azure-pipelines.yml
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  TENANT_ID: '5054727b-2e44-4f37-8b1b-57b988b26b5b'
+  CLIENT_ID: '4aae9dbe-8ffc-42cd-ad67-46d4b18d101a'   # of zap scanner application
+  API_APP_ID_URI: 'api://de697752-9fc4-458f-8144-7925108aa749'   #api://de697752-9fc4-458f-8144-7925108aa749
+  TARGET: 'https://jesa.aymanekenbouch.online'
+
+stages:
+  - stage: DAST
+    displayName: 'OWASP ZAP Authenticated Scan'
+    jobs:
+      - job: ZAPScan
+        displayName: 'ZAP + Entra ID OIDC'
+        timeoutInMinutes: 60
+
+        steps:
+     
+          - checkout: self  # Checks out the repository containing your pipeline
+            fetchDepth: 0   # Only fetches the latest commit (shallow fetch)
+
+          # ── 1. Exchange DevOps OIDC token → Entra ID access token ──────────
+          - task: AzureCLI@2
+            name: GetToken
+            displayName: 'Fetch Bearer token via OIDC federation'
+            inputs:
+              azureSubscription: 'entra-zap-scanner'   # your service connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true                 # exposes $servicePrincipalId, $idToken
+              inlineScript: |
+                set -euo pipefail
+
+                # AzureCLI@2 with addSpnToEnvironment=true exposes:
+                #   $servicePrincipalId  → CLIENT_ID of the service principal
+                #   $idToken             → the OIDC assertion to exchange
+
+                echo "Exchanging OIDC assertion for Entra ID access token..."
+
+                RESPONSE=$(curl -s -X POST \
+                  "https://login.microsoftonline.com/$(TENANT_ID)/oauth2/v2.0/token" \
+                  -H "Content-Type: application/x-www-form-urlencoded" \
+                  -d "client_id=$(CLIENT_ID)" \
+                  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+                  -d "client_assertion=$idToken" \
+                  -d "scope=$(API_APP_ID_URI)/.default" \
+                  -d "grant_type=client_credentials")
+
+                TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+
+                if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+                  ERROR=$(echo "$RESPONSE" | jq -r '.error_description // .error // "unknown"')
+                  echo "##[error]Token exchange failed: $ERROR"
+                  exit 1
+                fi
+
+                echo "Token acquired: ${TOKEN:0:30}..."
+
+                # ⚠ Use ##vso to pass the secret to the next step — masked in logs
+                echo "##vso[task.setvariable variable=BEARER_TOKEN;isSecret=true]$TOKEN"
+
+          # ── 2. Verify token against backend ────────────────────────────────
+          - bash: |
+              set -euo pipefail
+              HTTP=$(curl -sk -o /dev/null -w "%{http_code}" \
+                --connect-timeout 5 --max-time 15 \
+                -H "Authorization: Bearer $BEARER_TOKEN" \
+                "$(TARGET)/api/dashboard")
+              echo "Backend probe: HTTP $HTTP"
+              [ "$HTTP" = "200" ] || [ "$HTTP" = "403" ] || {
+                echo "##[error]Backend unreachable or token rejected (HTTP $HTTP)"
+                exit 1
+              }
+            displayName: 'Verify token against backend'
+            env:
+              BEARER_TOKEN: $(BEARER_TOKEN)   # pull the secret variable in safely
+
+          # ── 3. Write automation YAML ────────────────────────────────────────
+          - bash: |
+              cat automation-template.yaml > automation.yaml
+            displayName: 'Prepare ZAP automation plan'
+            workingDirectory: '$(Build.SourcesDirectory)'
+
+          # ── 4. Pull ZAP ─────────────────────────────────────────────────────
+# ── 4. Get AKS credentials ─────────────────────────────────────
+          - task: AzureCLI@2
+            displayName: 'Connect to AKS'
+            inputs:
+              azureSubscription: 'entra-zap-scanner'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az aks get-credentials \
+                  --resource-group owaspzap-application \
+                  --name owaspzap-aks \
+                  --overwrite-existing
+
+          # ── 5. Get ZAP pod name ────────────────────────────────────────
+          - bash: |
+              POD=$(kubectl get pod -n security -l app=zap-agent -o jsonpath='{.items[0].metadata.name}')
+              echo "POD_NAME=$POD"
+              echo "##vso[task.setvariable variable=ZAP_POD]$POD"
+            displayName: 'Get ZAP pod'
+
+          # ── 6. Copy automation plan to pod ─────────────────────────────
+          - bash: |
+              kubectl cp \
+                automation.yaml \
+                security/$(ZAP_POD):/zap/wrk/automation.yaml
+            displayName: 'Upload automation plan to ZAP pod'
+            workingDirectory: '$(Build.SourcesDirectory)'
+
+          # ── 7. Run ZAP scan inside AKS pod ─────────────────────────────
+          - bash: |
+              kubectl exec -n security $(ZAP_POD) -- \
+                zap.sh -cmd \
+                -config "replacer.full_list(0).description=BearerAuth" \
+                -config "replacer.full_list(0).enabled=true" \
+                -config "replacer.full_list(0).matchtype=REQ_HEADER" \
+                -config "replacer.full_list(0).matchstr=Authorization" \
+                -config "replacer.full_list(0).replacement=Bearer $BEARER_TOKEN" \
+                -autorun /zap/wrk/automation.yaml
+            displayName: 'Run ZAP authenticated scan in AKS'
+            env:
+              BEARER_TOKEN: $(BEARER_TOKEN)
+
+          # ── 8. Download reports from pod ───────────────────────────────
+          - bash: |
+              kubectl cp \
+                security/$(ZAP_POD):/zap/wrk/zap-report.html \
+                zap-report.html
+
+              kubectl cp \
+                security/$(ZAP_POD):/zap/wrk/zap-report.json \
+                zap-report.json
+            displayName: 'Download ZAP reports'
+
+          # ── 9. Publish reports ─────────────────────────────────────────
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish ZAP HTML report'
+            condition: always()
+            inputs:
+              pathToPublish: 'zap-report.html'
+              artifactName: 'zap-report-html'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish ZAP JSON report'
+            condition: always()
+            inputs:
+              pathToPublish: 'zap-report.json'
+              artifactName: 'zap-report-json'
+
+
+          # ── 7. Fail pipeline on HIGH findings ──────────────────────────────
+          - bash: |
+              if grep -q '"riskcode":"3"' zap-report.json 2>/dev/null; then
+                echo "##[error]HIGH severity findings detected!"
+                exit 2
+              fi
+              echo "No HIGH severity findings."
+            displayName: 'Gate: fail on HIGH severity'
+            workingDirectory: '$(Build.SourcesDirectory)'

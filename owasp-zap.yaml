@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zap-reports-pvc
+  namespace: security
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zap-agent
+  namespace: security
+  labels:
+    app: zap-agent
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: zap-agent
+
+  template:
+    metadata:
+      labels:
+        app: zap-agent
+
+    spec:
+      containers:
+        - name: zap
+
+          image: ghcr.io/zaproxy/zaproxy:stable
+
+          imagePullPolicy: Always
+
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting persistent ZAP agent..."
+              mkdir -p /zap/wrk/reports
+              tail -f /dev/null
+
+          ports:
+            - containerPort: 8080
+              name: zap-api
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+
+          volumeMounts:
+            - name: reports
+              mountPath: /zap/wrk
+
+          securityContext:
+            runAsUser: 0
+
+      volumes:
+        - name: reports
+          persistentVolumeClaim:
+            claimName: zap-reports-pvc

@@ -13,8 +13,8 @@ helm upgrade --install cert-manager jetstack/cert-manager `
 kubectl create namespace jesa
 
 
-kubectl apply -f gatewayclass.yaml
-kubectl apply -f gateway.yaml
+kubectl apply -f K8S/internet/gatewayclass.yaml
+kubectl apply -f K8S/internet/gateway.yaml
 ```
 dns record to jesa.aymanekenbouch.online in Azure DNS Zone
 
@@ -33,6 +33,8 @@ kubectl apply -f K8S/internet/backend-service.yaml
 kubectl apply -f K8S/internet/frontend.yaml
 kubectl apply -f K8S/internet/frontend-service.yaml
 kubectl get pods -n jesa
+
+kubectl apply -f .\owasp-zap.yaml     
 ```
 Everything is good!
 
