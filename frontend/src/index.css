@@ -1,0 +1,196 @@
+:root {
+  --primary: #0f6cbd;
+  --bg: #f3f2f1;
+  --card: #ffffff;
+  --border: #edebe9;
+  --text: #323130;
+  --muted: #605e5c;
+}
+
+/* Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Base */
+body {
+  font-family: "Segoe UI", system-ui;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Layout */
+.page {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+/* Card */
+.card {
+  background: var(--card);
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  transition: 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+}
+
+/* Login */
+.login-card {
+  width: 360px;
+  text-align: center;
+}
+
+.logo {
+  width: 80px;
+  margin-bottom: 16px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+
+/* Buttons */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 600;
+
+  transition: 0.2s;
+}
+
+.btn:hover {
+  background: #f9f9f9;
+}
+
+.btn-outline {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+/* Navbar */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  background: rgba(255,255,255,0.9);
+  padding: 12px 20px;
+  border-radius: 10px;
+  margin-bottom: 30px;
+}
+
+.logo-small {
+  width: 40px;
+}
+
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Avatar */
+.avatar {
+  width: 32px;
+  height: 32px;
+  background: var(--primary);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hero */
+.hero {
+  margin-bottom: 24px;
+}
+
+.hero h1 {
+  font-size: 28px;
+}
+
+.hero span {
+  color: var(--primary);
+}
+
+/* Grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+/* Text */
+.label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Loading */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #ddd;
+  border-top: 4px solid var(--primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Skeleton */
+.skeleton {
+  height: 100px;
+  background: linear-gradient(90deg, #eee, #f5f5f5, #eee);
+  animation: shimmer 1.2s infinite;
+}
+
+@keyframes shimmer {
+  100% { background-position: -200% 0; }
+}
+
+/* Error */
+.error {
+  color: red;
+}

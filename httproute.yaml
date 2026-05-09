@@ -1,0 +1,27 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: jesa-http-route
+  namespace:  jesa
+spec:
+  parentRefs:
+  - name: jesa-gateway
+    namespace: jesa
+    port: 443
+  hostnames:
+  - "jesa.aymanekenbouch.online"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    backendRefs:
+    - name: backend-service
+      port: 3500
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: frontend-service
+      port: 8080

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: dast
+data:
+  NODE_ENV: "development"
+  PORT: "30080"
+  # Frontend URL — used by backend for CORS and redirects after login
+  # On Docker Desktop with ingress: http://localhost
+  FRONTEND_URL: "http://localhost"
+  # Backend URL — used for OAuth callback URL registered in Entra ID
+  # Must match exactly what is registered in Azure Portal
+  BACKEND_URL: "http://localhost"

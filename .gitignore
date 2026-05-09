@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Build outputs
+backend/dist/
+dist/
+
+# Environment files
+.env
+config.env
+
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.lock.info
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# Security/auth files
+bearer-auth.js
+automation.yaml
+automation-template.yaml
+
+# Report files (generated)
+zap-report.html
+zap-report.json
+zap-scan.sh
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

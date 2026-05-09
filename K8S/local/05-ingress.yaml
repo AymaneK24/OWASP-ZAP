@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Requires nginx ingress controller on Docker Desktop:
+#
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+#
+# Wait for it to be ready:
+#   kubectl wait --namespace ingress-nginx \
+#     --for=condition=ready pod \
+#     --selector=app.kubernetes.io/component=controller \
+#     --timeout=120s
+#
+# After applying this ingress:
+#   Frontend → http://localhost/
+#   Backend  → http://localhost/api/   and   http://localhost/auth/
+#
+# Update your Entra ID redirect URI to: http://localhost/auth/callback
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dast-ingress
+  namespace: dast
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    # Rewrite /api/xxx → /api/xxx and /auth/xxx → /auth/xxx on backend
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # ── Backend routes ─────────────────────────────────────────────────
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80
+
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80
+
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80
+
+          # ── Frontend — catch all ───────────────────────────────────────────
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

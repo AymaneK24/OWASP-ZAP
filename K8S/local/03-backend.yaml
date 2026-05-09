@@ -1,0 +1,95 @@
+# ─── Backend Deployment ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: dast
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          # Use local image built with: docker build -t dast-backend:latest ./backend
+          image: aymanekh24/dast-backend:latest
+          # Never pull — use local image from Docker Desktop
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 4000
+              name: http
+
+          # ── Non-sensitive config ───────────────────────────────────────────
+          envFrom:
+            - configMapRef:
+                name: backend-config
+
+          # ── Sensitive config from Secret ───────────────────────────────────
+          env:
+            - name: ENTRA_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: ENTRA_TENANT_ID
+            - name: ENTRA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: ENTRA_CLIENT_ID
+            - name: ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: ENTRA_CLIENT_SECRET
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SESSION_SECRET
+
+          # ── Probes ─────────────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # ── Resources (light for local) ────────────────────────────────────
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+# ─── Backend Service ────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: dast
+spec:
+  selector:
+    app: backend
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 4000
+      nodePort: 30080
