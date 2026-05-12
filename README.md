@@ -14,14 +14,19 @@ kubectl create namespace jesa
 
 
 kubectl apply -f K8S/internet/gatewayclass.yaml
+kubectl get gatewayclass -n envoy-gateway-system
 kubectl apply -f K8S/internet/gateway.yaml
+kubectl get gateway -n jesa -w
+Ctrl+C
 ```
 dns record to jesa.aymanekenbouch.online in Azure DNS Zone
 
 
 ```
 kubectl apply -f K8S/internet/clusterissuer.yaml
+kubectl get clusterissuer -n jesa
 kubectl apply -f K8S/internet/certificate.yaml
+kubectl get certificate -n jesa -w 
 kubectl apply -f K8S/internet/httproute.yaml
 kubectl get certificate -n jesa -w
 ```
@@ -34,7 +39,8 @@ kubectl apply -f K8S/internet/frontend.yaml
 kubectl apply -f K8S/internet/frontend-service.yaml
 kubectl get pods -n jesa
 
-kubectl apply -f .\owasp-zap.yaml     
+kubectl apply -f .\owasp-zap.yaml
+kubectl get pods -n security     
 ```
 Everything is good!
 

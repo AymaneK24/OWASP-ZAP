@@ -1,0 +1,61 @@
+env:
+  contexts:
+    - name: backend
+      urls:
+        - https://jesa.aymanekenbouch.online
+      includePaths:
+        - https://jesa\.aymanekenbouch\.online/api/.*
+        - https://jesa\.aymanekenbouch\.online/auth/.*
+
+jobs:
+
+  # ── Seed known endpoints so ZAP has them in the site tree ─────────────────
+  # Token is injected via docker -config flags (not replacer job)
+  # so every request here is authenticated automatically
+  - type: requestor
+    requests:
+      - url: https://jesa.aymanekenbouch.online/health
+        method: GET
+      - url: https://jesa.aymanekenbouch.online/api/me
+        method: GET
+      - url: https://jesa.aymanekenbouch.online/api/dashboard
+        method: GET
+      - url: https://jesa.aymanekenbouch.online/auth/login
+        method: GET
+
+  # ── Traditional spider to find any additional paths ────────────────────────
+  - type: spider
+    parameters:
+      context: backend
+      maxDuration: 3
+      acceptCookies: false
+
+  # ── Wait for passive scan ──────────────────────────────────────────────────
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  # ── Active scan — attacks every URL collected above ────────────────────────
+  # /api/dashboard will be attacked because it was seeded by requestor
+  - type: activeScan
+    parameters:
+      context: backend
+      maxDuration: 20
+      policy: Default Policy
+
+  # ── HTML report ────────────────────────────────────────────────────────────
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/
+      reportFile: zap-report.html
+      reportTitle: "DAST Report - jesa.aymanekenbouch.online"
+      reportDescription: "Authenticated scan via Entra ID Bearer token"
+
+  # ── JSON report (for pipeline parsing) ────────────────────────────────────
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/
+      reportFile: zap-report.json
+      reportTitle: "DAST Report - jesa.aymanekenbouch.online"

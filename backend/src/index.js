@@ -5,14 +5,15 @@ const passport = require('passport');
 const { OIDCStrategy } = require('passport-azure-ad');
 const cors = require('cors');
 const helmet = require('helmet');
-const app = express();
-
-
-app.set('trust proxy', 1); // ← ADD THIS LINE
-
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
+const { setupSwagger } = require('./swagger');
 
+const app = express();
+
+app.set('trust proxy', 1);
+
+// ─── JWKS ─────────────────────────────────────────────────────────────────────
 const jwks = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.ENTRA_TENANT_ID}/discovery/keys`,
   cache: true,
@@ -26,6 +27,7 @@ function getKey(header, callback) {
   });
 }
 
+// ─── Bearer Token Validator ────────────────────────────────────────────────────
 const validateBearerToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -45,7 +47,6 @@ const validateBearerToken = (req, res, next) => {
       console.error('JWT validation failed:', err.message);
       return res.status(401).json({ error: 'Invalid token' });
     }
-    // Attach decoded token as user so isAuthenticated-like check works
     req.user = {
       id: decoded.sub,
       displayName: decoded.name || decoded.appid,
@@ -56,7 +57,7 @@ const validateBearerToken = (req, res, next) => {
   });
 };
 
-// ─── Security & Middleware ─────────────────────────────────────────────────────
+// ─── Core Middleware ───────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(cors({
@@ -64,7 +65,10 @@ app.use(cors({
   credentials: true,
 }));
 
+// ─── Swagger (public, before session/auth) ────────────────────────────────────
+setupSwagger(app);
 
+// ─── Session & Passport ────────────────────────────────────────────────────────
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -72,23 +76,21 @@ app.use(session({
   cookie: {
     secure: true,
     httpOnly: true,
-    sameSite: 'none',  // ← must be 'none' for cross-redirect flows over HTTPS
+    sameSite: 'none',
     maxAge: 1000 * 60 * 60,
-    // NO domain field
-  }
+  },
 }));
-
 
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(validateBearerToken);
 
 // ─── Passport / Entra ID Strategy ─────────────────────────────────────────────
-const ENTRA_TENANT_ID  = process.env.ENTRA_TENANT_ID;
-const ENTRA_CLIENT_ID  = process.env.ENTRA_CLIENT_ID;
+const ENTRA_TENANT_ID     = process.env.ENTRA_TENANT_ID;
+const ENTRA_CLIENT_ID     = process.env.ENTRA_CLIENT_ID;
 const ENTRA_CLIENT_SECRET = process.env.ENTRA_CLIENT_SECRET;
-const SESSION_SECRET = process.env.SESSION_SECRET;
-const BACKEND_URL = process.env.BACKEND_URL;
+const BACKEND_URL         = process.env.BACKEND_URL;
+const FRONTEND_URL        = process.env.FRONTEND_URL || 'https://jesa.aymanekenbouch.online';
 
 passport.use(new OIDCStrategy(
   {
@@ -119,60 +121,105 @@ passport.deserializeUser((user, done) => done(null, user));
 
 // ─── Auth Guard ────────────────────────────────────────────────────────────────
 const isAuthenticated = (req, res, next) => {
-  // Already set by Bearer token validation
-  if (req.user) return next();
-  // Fall back to session (browser login)
-  if (req.isAuthenticated()) return next();
+  if (req.user) return next();           // set by Bearer token validator
+  if (req.isAuthenticated()) return next(); // set by session (browser login)
   res.status(401).json({ error: 'Unauthorized' });
 };
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// Initiate login
+/**
+ * @openapi
+ * /auth/login:
+ *   get:
+ *     summary: Initiate Microsoft Entra ID login
+ *     responses:
+ *       302:
+ *         description: Redirect to Microsoft login
+ */
 app.get('/auth/login', passport.authenticate('azuread-openidconnect', {
   prompt: 'select_account',
 }));
 
+/**
+ * @openapi
+ * /auth/callback:
+ *   get:
+ *     summary: OAuth callback from Microsoft Entra ID
+ *     responses:
+ *       302:
+ *         description: Redirect to frontend on success
+ */
+app.get('/auth/callback', (req, res, next) => {
+  passport.authenticate('azuread-openidconnect', (err, user, info) => {
+    if (err)   { console.error('AUTH ERROR:', err);   return res.redirect('/auth/error'); }
+    if (!user) { console.error('AUTH FAILED:', info); return res.redirect('/auth/error'); }
+    req.logIn(user, (err2) => {
+      if (err2) return next(err2);
+      res.redirect(FRONTEND_URL);
+    });
+  })(req, res, next);
+});
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://jesa.aymanekenbouch.online';
-
-// OAuth callback
-app.get('/auth/callback',
-  (req, res, next) => {
-    passport.authenticate('azuread-openidconnect', (err, user, info) => {
-      if (err)  { console.error('AUTH ERROR:', err);  return res.redirect('/auth/error'); }
-      if (!user) { console.error('AUTH FAILED:', info); return res.redirect('/auth/error'); }
-      req.logIn(user, (err2) => {
-        if (err2) return next(err2);
-        res.redirect(FRONTEND_URL || 'https://jesa.aymanekenbouch.online');
-      });
-    })(req, res, next);
-  }
-);
-
-// Logout
+/**
+ * @openapi
+ * /auth/logout:
+ *   get:
+ *     summary: Logout and destroy session
+ *     responses:
+ *       302:
+ *         description: Redirect to Microsoft logout
+ */
 app.get('/auth/logout', (req, res, next) => {
   req.logout((err) => {
     if (err) return next(err);
     req.session.destroy();
     const logoutUrl =
       `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/logout` +
-      `?post_logout_redirect_uri=${encodeURIComponent(process.env.FRONTEND_URL)}`;
+      `?post_logout_redirect_uri=${encodeURIComponent(FRONTEND_URL)}`;
     res.redirect(logoutUrl);
   });
 });
 
-// Auth error
+/**
+ * @openapi
+ * /auth/error:
+ *   get:
+ *     summary: Authentication error
+ *     responses:
+ *       401:
+ *         description: Authentication failed
+ */
 app.get('/auth/error', (req, res) => {
   res.status(401).json({ error: 'Authentication failed' });
 });
 
-// Current user (public – returns null when not logged in)
+/**
+ * @openapi
+ * /api/me:
+ *   get:
+ *     summary: Get current authenticated user
+ *     responses:
+ *       200:
+ *         description: User object or null
+ */
 app.get('/api/me', (req, res) => {
   res.json({ user: req.user || null });
 });
 
-// Protected example endpoint
+/**
+ * @openapi
+ * /api/dashboard:
+ *   get:
+ *     summary: Protected dashboard endpoint
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Dashboard stats for authenticated user
+ *       401:
+ *         description: Unauthorized
+ */
 app.get('/api/dashboard', isAuthenticated, (req, res) => {
   res.json({
     message: `Welcome, ${req.user.displayName}!`,
@@ -184,7 +231,15 @@ app.get('/api/dashboard', isAuthenticated, (req, res) => {
   });
 });
 
-// Health check
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     summary: Health check
+ *     responses:
+ *       200:
+ *         description: Server is up
+ */
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // ─── Start ────────────────────────────────────────────────────────────────────

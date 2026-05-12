@@ -36,6 +36,23 @@ spec:
         - name: backend-service
           port: 80
 
+    - matches:
+        - path:
+            type: Exact
+            value: /swagger.json
+      backendRefs:
+        - name: backend-service
+          port: 80
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api-docs
+      backendRefs:
+        - name: backend-service
+          port: 80
+
+          
     # Frontend — catch all
     - matches:
         - path:

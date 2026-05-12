@@ -1,0 +1,249 @@
+- stage: DEV_CI
+  displayName: "DEV CI — Unified Security Gate"
+
+  condition: >-
+    and(
+      eq(variables['Build.Reason'], 'PullRequest'),
+      eq(variables['System.PullRequest.TargetBranch'], 'refs/heads/develop')
+    )
+
+  jobs:
+  - job: PR_Scan
+    displayName: "Opengrep + Gitleaks Scan"
+    timeoutInMinutes: 40
+
+    variables:
+      # ── Master gate switch (override from Azure DevOps pipeline UI) ────────
+      # true  → ANY new finding at ANY severity fails the PR
+      # false → Scans run and reports publish, but the PR is never blocked
+      ENABLE_QUALITY_GATE: "true"
+
+      # ── Azure Repos base URL for source links in the HTML report ──────────
+      # Format: https://dev.azure.com/{org}/{project}/_git/{repo}
+      # Example: https://dev.azure.com/myorg/myproject/_git/myrepo
+      AZURE_REPO_BASE_URL: "https://dev.azure.com/YOUR_ORG/YOUR_PROJECT/_git/YOUR_REPO"
+
+    steps:
+
+    # ── 1. Full checkout (needed for Gitleaks history + Opengrep baseline) ───
+    - checkout: self
+      fetchDepth: 0
+      displayName: "Checkout — full git history"
+
+    # ── 2. Install Opengrep ──────────────────────────────────────────────────
+    - bash: |
+        set -e
+        echo "Installing Opengrep..."
+        curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
+        OPENGREP_BIN="$HOME/.opengrep/cli/latest/opengrep"
+        $OPENGREP_BIN --version
+        echo "##vso[task.setvariable variable=OPENGREP]$OPENGREP_BIN"
+      displayName: "Install Opengrep"
+
+    # ── 3. Install Gitleaks ──────────────────────────────────────────────────
+    - bash: |
+        set -e
+        echo "Installing Gitleaks..."
+        GITLEAKS_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+        curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" \
+          | sudo tar -xz -C /usr/local/bin gitleaks
+        echo "Gitleaks: $(gitleaks version)"
+      displayName: "Install Gitleaks"
+
+    # ── 4. Resolve merge-base commit (shared baseline for both tools) ─────────
+    - bash: |
+        set -e
+        BASE=$(git merge-base origin/develop HEAD)
+        echo "Baseline commit: $BASE"
+        echo "##vso[task.setvariable variable=BASELINE_COMMIT]$BASE"
+        # Also export the list of files changed in this PR (used by report)
+        git diff --name-only "$BASE" HEAD > changed_files.txt
+        echo "Changed files in this PR:"
+        cat changed_files.txt
+      displayName: "Resolve merge-base commit"
+
+    # ── 5. Opengrep — full codebase SARIF (all findings, feeds Security tab) ─
+    - bash: |
+        set -e
+        echo "Running Opengrep full scan (SARIF)..."
+        $OPENGREP scan --config auto --sarif -o opengrep-full.sarif || true
+        OG_FULL=$(jq '.runs[0].results | length' opengrep-full.sarif 2>/dev/null || echo "0")
+        echo "Opengrep full SARIF: $OG_FULL findings"
+        echo "##vso[task.setvariable variable=OG_FULL_COUNT]$OG_FULL"
+      displayName: "Scan — Opengrep full codebase (SARIF)"
+      env:
+        OPENGREP: $(OPENGREP)
+
+    # ── 6. Opengrep — new-code delta JSON (PR-scoped, feeds quality gate) ────
+    - bash: |
+        set -e
+        echo "Running Opengrep new-code delta scan (baseline: $BASELINE_COMMIT)..."
+        $OPENGREP scan \
+          --config auto \
+          --baseline-commit "$BASELINE_COMMIT" \
+          --json -o opengrep-new.json || true
+        OG_NEW=$(jq '.results | length' opengrep-new.json 2>/dev/null || echo "0")
+        echo "Opengrep new-code findings: $OG_NEW"
+        echo "##vso[task.setvariable variable=OG_NEW_COUNT]$OG_NEW"
+      displayName: "Scan — Opengrep new-code delta (JSON)"
+      env:
+        OPENGREP: $(OPENGREP)
+        BASELINE_COMMIT: $(BASELINE_COMMIT)
+
+    # ── 7. Gitleaks — full history SARIF + new-code delta JSON ───────────────
+    #
+    #  Full scan  : entire git history → feeds Security tab + HTML report overview
+    #  Delta scan : commits introduced by this PR only → feeds quality gate
+    #
+    - bash: |
+        set -e
+        echo "Running Gitleaks new-code delta scan (baseline: $BASELINE_COMMIT)..."
+        gitleaks detect \
+          --log-opts "$BASELINE_COMMIT..HEAD" \
+          --report-format json \
+          --report-path gitleaks-new.json || true
+
+        GL_NEW=$(jq 'if . == null then 0 else length end' gitleaks-new.json 2>/dev/null || echo "0")
+        echo "Gitleaks new-code secrets: $GL_NEW"
+        echo "##vso[task.setvariable variable=GL_NEW_COUNT]$GL_NEW"
+      displayName: "Scan — Gitleaks new-code delta"
+      env:
+        BASELINE_COMMIT: $(BASELINE_COMMIT)
+
+    # ── 8. Stage all SARIFs for Azure Security tab ───────────────────────────
+    - bash: |
+        set -e
+        mkdir -p sarif-reports
+        [ -f opengrep-full.sarif ] && cp opengrep-full.sarif sarif-reports/opengrep.sarif
+        [ -f gitleaks-full.sarif ] && cp gitleaks-full.sarif sarif-reports/gitleaks.sarif
+        echo "SARIF files staged:"
+        ls -lh sarif-reports/
+      displayName: "Stage SARIF reports for Security tab"
+
+    # ── 9. Generate ISO 27001 HTML report ────────────────────────────────────
+    - task: DownloadSecureFile@1
+      name: reportScript
+      displayName: "Download report generator (generate-report.sh)"
+      inputs:
+        secureFile: 'generate-report.sh'
+
+    - bash: |
+        set -e
+        chmod +x "$(reportScript.secureFilePath)"
+        "$(reportScript.secureFilePath)"
+      displayName: "Generate ISO 27001 unified HTML report"
+      env:
+        BUILD_REPOSITORY_NAME:              $(Build.Repository.Name)
+        BUILD_SOURCEBRANCH:                 $(Build.SourceBranch)
+        BUILD_BUILDID:                      $(Build.BuildId)
+        BUILD_BUILDNUMBER:                  $(Build.BuildNumber)
+        SYSTEM_TEAMFOUNDATIONCOLLECTIONURI: $(System.TeamFoundationCollectionUri)
+        SYSTEM_TEAMPROJECT:                 $(System.TeamProject)
+        SYSTEM_PULLREQUEST_TITLE:           $(System.PullRequest.Title)
+        SYSTEM_PULLREQUEST_ID:              $(System.PullRequest.PullRequestId)
+        BASELINE_COMMIT:                    $(BASELINE_COMMIT)
+        AZURE_REPO_BASE_URL:                $(AZURE_REPO_BASE_URL)
+        OG_FULL_COUNT:                      $(OG_FULL_COUNT)
+        OG_NEW_COUNT:                       $(OG_NEW_COUNT)
+        GL_FULL_COUNT:                      $(GL_FULL_COUNT)
+        GL_NEW_COUNT:                       $(GL_NEW_COUNT)
+
+    # ── 10. QUALITY GATE — any new finding at any severity fails the PR ───────
+    #
+    #  Scope:
+    #  • Opengrep  → new-code delta only (opengrep-new.json)
+    #  • Gitleaks  → new-code delta only (gitleaks-new.json)
+    #
+    #  Set ENABLE_QUALITY_GATE=false in the pipeline UI to run scans without
+    #  blocking the PR (useful during initial rollout / baseline remediation).
+    #
+    - bash: |
+        set -e
+
+        OG_NEW=$(jq '.results | length' opengrep-new.json 2>/dev/null || echo 0)
+        GL_NEW=$(jq 'if . == null then 0 else length end' gitleaks-new.json 2>/dev/null || echo 0)
+        GRAND_NEW=$((OG_NEW + GL_NEW))
+
+        # ── Severity breakdown for display only ───────────────────────────────
+        OG_HIGH=$(jq '[.results[] | select(.extra.severity=="ERROR")]   | length' opengrep-new.json 2>/dev/null || echo 0)
+        OG_MED=$(jq  '[.results[] | select(.extra.severity=="WARNING")] | length' opengrep-new.json 2>/dev/null || echo 0)
+        OG_LOW=$(jq  '[.results[] | select(.extra.severity=="INFO")]    | length' opengrep-new.json 2>/dev/null || echo 0)
+
+        echo "╔══════════════════════════════════════════════════════╗"
+        echo "║         UNIFIED SECURITY QUALITY GATE                ║"
+        echo "╠══════════════════════════════════════════════════════╣"
+        echo "║  OPENGREP  (new code — PR delta)                     ║"
+        echo "║    High      : $OG_HIGH"
+        echo "║    Medium    : $OG_MED"
+        echo "║    Low       : $OG_LOW"
+        echo "║    New total : $OG_NEW"
+        echo "╠══════════════════════════════════════════════════════╣"
+        echo "║  GITLEAKS  (new code — PR delta)                     ║"
+        echo "║    Secrets   : $GL_NEW"
+        echo "╠══════════════════════════════════════════════════════╣"
+        echo "║  Gate enabled: $ENABLE_QUALITY_GATE"
+        echo "║  Grand new   : $GRAND_NEW"
+        echo "╚══════════════════════════════════════════════════════╝"
+
+        if [ "$ENABLE_QUALITY_GATE" != "true" ]; then
+          echo "Quality gate is DISABLED (ENABLE_QUALITY_GATE=false)."
+          echo "Scans completed. Reports published. PR not blocked."
+          exit 0
+        fi
+
+        GATE_FAILED=false
+
+        if [ "$OG_NEW" -gt 0 ]; then
+          echo "##vso[task.logissue type=error][Opengrep] $OG_NEW new finding(s) introduced in this PR ($OG_HIGH High / $OG_MED Medium / $OG_LOW Low)."
+          GATE_FAILED=true
+        fi
+
+        if [ "$GL_NEW" -gt 0 ]; then
+          echo "##vso[task.logissue type=error][Gitleaks] CRITICAL: $GL_NEW secret(s) found in commits introduced by this PR. Rotate all exposed credentials immediately."
+          GATE_FAILED=true
+        fi
+
+        if $GATE_FAILED; then
+          echo ""
+          echo "▶ Download SAST-Report artifact for full details and remediation links."
+          echo "##vso[task.complete result=Failed;]Security gate FAILED — $GRAND_NEW new finding(s) in this PR. See SAST-Report artifact."
+          exit 1
+        fi
+
+        echo "Security gate PASSED — no new findings from Opengrep or Gitleaks in this PR."
+      displayName: "Quality gate — any new finding blocks PR"
+      env:
+        ENABLE_QUALITY_GATE: $(ENABLE_QUALITY_GATE)
+
+    # ── 11. Publish SARIF → Azure Security tab (always) ──────────────────────
+    - task: PublishBuildArtifacts@1
+      displayName: "Publish SARIF → Security tab (Opengrep + Gitleaks)"
+      condition: always()
+      inputs:
+        pathToPublish: sarif-reports
+        artifactName:  CodeAnalysisLogs
+
+    # ── 12. Publish ISO 27001 HTML report (always) ────────────────────────────
+    - task: PublishBuildArtifacts@1
+      displayName: "Publish ISO 27001 HTML report"
+      condition: always()
+      inputs:
+        pathToPublish: report.html
+        artifactName:  "SAST-Report-$(Build.BuildId)"
+
+    # ── 13. Publish raw delta JSONs — audit trail ─────────────────────────────
+    #    ISO 27001 A.12.4.1 — evidence of vulnerability management per scan
+    - bash: |
+        mkdir -p audit-trail
+        [ -f opengrep-new.json ] && cp opengrep-new.json audit-trail/opengrep-delta.json
+        [ -f gitleaks-new.json ] && cp gitleaks-new.json audit-trail/gitleaks-delta.json
+        [ -f opengrep-full.sarif ] && cp opengrep-full.sarif audit-trail/opengrep-full.sarif
+      displayName: "Stage audit trail artifacts"
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: "Publish audit trail (delta JSONs + full SARIFs)"
+      condition: always()
+      inputs:
+        pathToPublish: audit-trail
+        artifactName:  "SAST-Audit-$(Build.BuildId)" 

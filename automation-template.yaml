@@ -3,60 +3,58 @@ env:
     - name: backend
       urls:
         - https://jesa.aymanekenbouch.online
-      includePaths:
-        - https://jesa\.aymanekenbouch\.online/api/.*
-        - https://jesa\.aymanekenbouch\.online/auth/.*
-        - https://jesa\.aymanekenbouch\.online/health
+
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
 
 jobs:
 
-  # ── Seed known endpoints so ZAP has them in the site tree ─────────────────
-  # Token is injected via docker -config flags (not replacer job)
-  # so every request here is authenticated automatically
-  - type: requestor
-    requests:
-      - url: https://jesa.aymanekenbouch.online/health
-        method: GET
-      - url: https://jesa.aymanekenbouch.online/api/me
-        method: GET
-      - url: https://jesa.aymanekenbouch.online/api/dashboard
-        method: GET
-      - url: https://jesa.aymanekenbouch.online/auth/login
-        method: GET
-
-  # ── Traditional spider to find any additional paths ────────────────────────
-  - type: spider
+  # =========================
+  # 1. IMPORT OPENAPI SPEC
+  # =========================
+  - type: openapi
     parameters:
+      apiUrl: https://jesa.aymanekenbouch.online/swagger.json
       context: backend
-      maxDuration: 3
-      acceptCookies: false
+      targetUrl: https://jesa.aymanekenbouch.online
 
-  # ── Wait for passive scan ──────────────────────────────────────────────────
+  # =========================
+  # 2. PASSIVE SCAN WAIT
+  # =========================
   - type: passiveScan-wait
     parameters:
-      maxDuration: 10
+      maxDuration: 20
 
-  # ── Active scan — attacks every URL collected above ────────────────────────
-  # /api/dashboard will be attacked because it was seeded by requestor
+  # =========================
+  # 3. ACTIVE SCAN
+  # =========================
   - type: activeScan
     parameters:
       context: backend
-      maxDuration: 20
       policy: Default Policy
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 45
+      delayInMs: 0
+      threadPerHost: 10
 
-  # ── HTML report ────────────────────────────────────────────────────────────
+  # =========================
+  # 4. REPORT (HTML)
+  # =========================
   - type: report
     parameters:
       template: traditional-html
       reportDir: /zap/wrk/
       reportFile: zap-report.html
       reportTitle: "DAST Report - jesa.aymanekenbouch.online"
-      reportDescription: "Authenticated scan via Entra ID Bearer token"
+      reportDescription: "Authenticated ZAP scan via OpenAPI spec"
 
-  # ── JSON report (for pipeline parsing) ────────────────────────────────────
+  # =========================
+  # 5. REPORT (JSON)
+  # =========================
   - type: report
     parameters:
       template: traditional-json
       reportDir: /zap/wrk/
       reportFile: zap-report.json
-      reportTitle: "DAST Report - jesa.aymanekenbouch.online"
