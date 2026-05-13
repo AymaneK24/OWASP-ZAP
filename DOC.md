@@ -116,36 +116,16 @@ logos de OpenGrep et GitLeaks
    * Opengrep → vulnerability detection
    * Gitleaks → secret detection
 3. Reports are generated in **SARIF format**
-4. Reports are converted to JSON for further processing
-5. Results are stored and analyzed
+4. Reports are converted to JSON for further processing and generating an HTML Report
+
+<img src="./images/Screenshot 2026-05-12 230154.png" width="700" />
+
+5. Report are being pushed into artifacts of the pipeline
+
+
 
 ---
 
-## 📌 SAST Benefits
 
-* Early detection of vulnerabilities
-* Prevention of secret leakage
-* Fully automated security checks
-* Standardized reporting (SARIF)
-
----
-
-# ⚖️ Summary
-
-| Type | Phase      | Goal                     | Tools                |
-| ---- | ---------- | ------------------------ | -------------------- |
-| DAST | Runtime    | Test running application | OWASP ZAP + Azure AD |
-| SAST | Build time | Analyze source code      | Opengrep + Gitleaks  |
-
----
-
-# 🚀 Final Notes
-
-This architecture ensures a **full DevSecOps security coverage**:
-
-* 🔐 Secure authentication-based DAST scanning
-* 🧬 Early vulnerability detection with SAST
-* 🔄 Fully automated CI/CD integration
-* 📊 Standardized reporting (SARIF + JSON)
 
 ---
