@@ -108,21 +108,33 @@ logos de OpenGrep et GitLeaks
 
 ---
 
-##  CI/CD Integration Flow
+## Intégration dans le pipeline CI/CD
 
-1. Code is pulled in CI/CD pipeline
-2. SAST tools are executed:
+1. Le code source est récupéré automatiquement dans le pipeline CI/CD.
 
-   * Opengrep → vulnerability detection
-   * Gitleaks → secret detection
-3. Reports are generated in **SARIF format**
-4. Reports are converted to JSON for further processing and generating an HTML Report
+2. Les outils SAST sont ensuite exécutés :
+
+   * **Opengrep** → détection des vulnérabilités et mauvaises pratiques de sécurité
+   * **Gitleaks** → détection des secrets exposés (tokens, mots de passe, clés API, etc.)
+
+3. Les résultats des scans sont générés au format **SARIF**, permettant une standardisation des rapports de sécurité.
+
+4. Les rapports sont ensuite convertis au format **JSON** afin de :
+
+   * faciliter leur traitement automatisé,
+   * générer un rapport HTML consolidé,
+   * et exploiter les résultats via l’extension **SARIF Viewer** dans Azure DevOps.
+
+Le mécanisme de **Quality Gate** est implémenté à l’aide de scripts Bash exploitant les rapports JSON ainsi que l’historique Git afin de détecter uniquement les nouvelles vulnérabilités introduites dans les Pull Requests.
+
+<img src="./images/Screenshot 2026-05-13 102735.png.png" width="700" />
 
 <img src="./images/Screenshot 2026-05-12 230154.png" width="700" />
 
-5. Report are being pushed into artifacts of the pipeline
+5. Enfin, les différents rapports générés sont publiés comme **artifacts du pipeline** afin de garantir leur traçabilité et leur consultation ultérieure.
 
 
+Le dossier SAST/ contient les details
 
 ---
 
